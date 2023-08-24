@@ -1,11 +1,11 @@
 package main
 
 import (
-	"context"
 	"debug/buildinfo"
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
@@ -63,7 +63,7 @@ func cmd() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			needsInstall, err := requiresInstall(cmd.Context(), args[0])
+			needsInstall, err := requiresInstall(args[0])
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func cmd() *cobra.Command {
 	return c
 }
 
-func requiresInstall(ctx context.Context, binPath string) (bool, error) {
+func requiresInstall(binPath string) (bool, error) {
 	b, err := os.ReadFile("go.mod")
 	if err != nil {
 		return false, fmt.Errorf("reading modfile: %w", err)
@@ -89,7 +89,7 @@ func requiresInstall(ctx context.Context, binPath string) (bool, error) {
 		return false, fmt.Errorf("parsing modfile: %w", err)
 	}
 
-	info, err := buildinfo.ReadFile(binPath)
+	bin, err := moduleFromBinary(binPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
@@ -98,19 +98,29 @@ func requiresInstall(ctx context.Context, binPath string) (bool, error) {
 		return false, fmt.Errorf("reading binary buildinfo (%s): %w", binPath, err)
 	}
 
-	bin := info.Main
-
-	var mod *module.Version
-	for _, r := range gomod.Require {
-		if r.Mod.Path != bin.Path {
-			continue
-		}
-
-		mod = &r.Mod
-	}
+	mod := versionFromGoMod(gomod, bin)
 	if mod == nil {
-		return false, fmt.Errorf("module (%s) not found in modfile.", bin.Path)
+		return false, fmt.Errorf("module (%s) not found in modfile", bin.Path)
 	}
 
 	return bin.Version != mod.Version, nil
+}
+
+func moduleFromBinary(path string) (debug.Module, error) {
+	info, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return debug.Module{}, err
+	}
+
+	return info.Main, nil
+}
+
+func versionFromGoMod(gomod *modfile.File, binaryModule debug.Module) *module.Version {
+	for _, required := range gomod.Require {
+		if required.Mod.Path == binaryModule.Path {
+			return &required.Mod
+		}
+	}
+
+	return nil
 }
