@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 func main() {
@@ -89,7 +91,7 @@ func requiresInstall(binPath string) (bool, error) {
 		return false, fmt.Errorf("parsing modfile: %w", err)
 	}
 
-	bin, err := moduleFromBinary(binPath)
+	info, err := buildinfo.ReadFile(binPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
@@ -98,6 +100,15 @@ func requiresInstall(binPath string) (bool, error) {
 		return false, fmt.Errorf("reading binary buildinfo (%s): %w", binPath, err)
 	}
 
+	goUpdate, err := needsUpdateForGo(gomod, info)
+	if err != nil {
+		return false, err
+	}
+	if goUpdate {
+		return true, nil
+	}
+
+	bin := info.Main
 	mod := versionFromGoMod(gomod, bin)
 	if mod == nil {
 		return false, fmt.Errorf("module (%s) not found in modfile", bin.Path)
@@ -106,13 +117,22 @@ func requiresInstall(binPath string) (bool, error) {
 	return bin.Version != mod.Version, nil
 }
 
-func moduleFromBinary(path string) (debug.Module, error) {
-	info, err := buildinfo.ReadFile(path)
-	if err != nil {
-		return debug.Module{}, err
+func needsUpdateForGo(gomod *modfile.File, info *debug.BuildInfo) (bool, error) {
+	modGoVersion := "v" + gomod.Go.Version
+	binGoVersion := "v" + strings.TrimPrefix(info.GoVersion, "go")
+
+	if !semver.IsValid(modGoVersion) {
+		return false, fmt.Errorf("parsing go.mod go version (%s)", modGoVersion)
+	}
+	if !semver.IsValid(binGoVersion) {
+		return false, fmt.Errorf("parsing binary go version (%s)", binGoVersion)
 	}
 
-	return info.Main, nil
+	if semver.Compare(binGoVersion, modGoVersion) == -1 {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func versionFromGoMod(gomod *modfile.File, binaryModule debug.Module) *module.Version {
