@@ -110,8 +110,10 @@ func requiresInstall(binPath string) (bool, error) {
 
 	bin := info.Main
 	mod := versionFromGoMod(gomod, bin)
+	// We didn't find a match between the modfile and the binary. Can happen if
+	// a binary has changed import paths.
 	if mod == nil {
-		return false, fmt.Errorf("module (%s) not found in modfile", bin.Path)
+		return true, nil
 	}
 
 	return bin.Version != mod.Version, nil
